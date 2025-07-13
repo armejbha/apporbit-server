@@ -58,7 +58,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
 
         res.send({ secure_url: result.secure_url, public_id: result.public_id });
 
-    } 
+    }
     catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Cloudinary upload failed', error });
@@ -66,13 +66,38 @@ app.post('/upload', upload.single('image'), async (req, res) => {
 });
 
 
-
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
         await client.connect();
 
-        // cloudinary image upload 
+        // database created 
+        const db = client.db('appdb');
+        const usersCollection = db.collection('users');
+
+        // inserted user to database
+        app.post('/user', async (req, res) => {
+            const userData = req.body
+            userData.role = 'user'
+            userData.created_at = new Date().toISOString()
+            userData.last_loggedIn = new Date().toISOString()
+            const query = {
+                email: userData?.email,
+            }
+            const alreadyExists = await usersCollection.findOne(query)
+            if (!!alreadyExists) {
+
+                const result = await usersCollection.updateOne(query, {
+                    $set: { last_loggedIn: new Date().toISOString() },
+                })
+                return res.send(result)
+            }
+
+            // return console.log(userData)
+            const result = await usersCollection.insertOne(userData)
+            res.send(result)
+        })
+
 
 
         // Send a ping to confirm a successful connection
