@@ -6,6 +6,9 @@ const cloudinary = require('cloudinary').v2;
 const app = express()
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const port = process.env.PORT || 3000;
+const admin = require("firebase-admin");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 // cloudinary upload 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -13,6 +16,29 @@ const upload = multer({ storage: multer.memoryStorage() });
 // middleware 
 app.use(cors())
 app.use(express.json())
+
+// token verified 
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
+
+const verifiedToken = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).send({ message: 'unauthorize access' });
+    }
+    const token = authHeader.split(' ')[1];
+    try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        req.decoded = decoded
+        next()
+    } catch (error) {
+        return res.status(403).send({ message: 'forbidden access' })
+    }
+
+}
+
 
 const uri = `mongodb+srv://${process.env.MONGO_USER}:${process.env.MONGO_PASS}@cluster.3ful3ka.mongodb.net/?retryWrites=true&w=majority&appName=Cluster`;
 
@@ -97,6 +123,8 @@ async function run() {
             const result = await usersCollection.insertOne(userData)
             res.send(result)
         })
+
+        // get user role from database 
 
 
 
