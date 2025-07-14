@@ -99,17 +99,64 @@ app.post('/upload', upload.single('image'), async (req, res) => {
 
 
 async function run() {
+
+
+    // database created 
+    const db = client.db('appdb');
+    const appsCollection = db.collection('apps');
+    const usersCollection = db.collection('users');
+
     try {
         // Connect the client to the server	(optional starting in v4.7)
         await client.connect();
 
-        // database created 
-        const db = client.db('appdb');
-        const appsCollection = db.collection('apps');
-        const usersCollection = db.collection('users');
+
+
+        const verifyAdmin = async (req, res, next) => {
+            const email = req?.user?.email
+            const user = await usersCollection.findOne({
+                email,
+            })
+            console.log(user?.role)
+            if (!user || user?.role !== 'admin')
+                return res
+                    .status(403)
+                    .send({ message: 'Admin only Actions!', role: user?.role })
+
+            next()
+        }
+
+        const verifyModerator = async (req, res, next) => {
+            const email = req?.user?.email
+            const user = await usersCollection.findOne({
+                email,
+            })
+            console.log(user?.role)
+            if (!user || user?.role !== 'moderator')
+                return res
+                    .status(403)
+                    .send({ message: 'Moderator only Actions!', role: user?.role })
+
+            next()
+        }
+
+
+
+        // post apps data 
+
+        app.post('/add-apps',verifiedToken, async (req, res) => {
+            try {
+                const appData = req.body;
+
+                const result = await appsCollection.insertOne(appData);
+                res.status(201).send({ message: 'App added successfully', insertedId: result.insertedId });
+            } catch (error) {
+                console.error('Error adding app:', error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
 
         // get all apps 
-
         app.get('/apps', async (req, res) => {
             try {
                 const result = await appsCollection.find().toArray();
@@ -119,7 +166,6 @@ async function run() {
                 res.status(500).send({ message: 'Failed to fetch products' });
             }
         });
-
 
 
         // inserted user to database
