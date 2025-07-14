@@ -14,7 +14,13 @@ const serviceAccount = JSON.parse(decoded);
 const upload = multer({ storage: multer.memoryStorage() });
 
 // middleware 
-app.use(cors())
+const corsOptions = {
+    origin: ['http://localhost:5173', 'http://localhost:5174'],
+    credentials: true,
+    optionSuccessStatus: 200,
+}
+app.use(cors(corsOptions))
+
 app.use(express.json())
 
 // token verified 
@@ -99,7 +105,22 @@ async function run() {
 
         // database created 
         const db = client.db('appdb');
+        const appsCollection = db.collection('apps');
         const usersCollection = db.collection('users');
+
+        // get all apps 
+
+        app.get('/apps', async (req, res) => {
+            try {
+                const result = await appsCollection.find().toArray();
+                res.send(result);
+            } catch (error) {
+                console.error('Error fetching products:', error);
+                res.status(500).send({ message: 'Failed to fetch products' });
+            }
+        });
+
+
 
         // inserted user to database
         app.post('/user', async (req, res) => {
@@ -125,6 +146,26 @@ async function run() {
         })
 
         // get user role from database 
+        app.get('/user/role/:email', verifiedToken, async (req, res) => {
+            const email = req.params.email
+            const result = await usersCollection.findOne({ email })
+            if (!result) return res.status(404).send({ message: 'User Not Found.' })
+            res.send({ role: result?.role })
+        })
+        // update user info data 
+        // PATCH /users/:email
+        app.patch('/users/:email', verifiedToken, async (req, res) => {
+            const email = req.params.email;
+            const updatedData = req.body;
+
+            const result = await usersCollection.updateOne(
+                { email },
+                { $set: updatedData }
+            );
+
+            res.send(result);
+        });
+
 
 
 
