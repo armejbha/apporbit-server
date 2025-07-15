@@ -106,6 +106,7 @@ async function run() {
     const appsCollection = db.collection('apps');
     const usersCollection = db.collection('users');
     const reviewsCollection = db.collection('reviews');
+    const reportsCollection = db.collection('reports');
 
     try {
         // Connect the client to the server	(optional starting in v4.7)
@@ -114,10 +115,11 @@ async function run() {
 
 
         const verifyAdmin = async (req, res, next) => {
-            const email = req?.user?.email
+            const email = req?.decoded?.email
             const user = await usersCollection.findOne({
                 email,
             })
+
             console.log(user?.role)
             if (!user || user?.role !== 'admin')
                 return res
@@ -128,7 +130,7 @@ async function run() {
         }
 
         const verifyModerator = async (req, res, next) => {
-            const email = req?.user?.email
+            const email = req?.decoded?.email
             const user = await usersCollection.findOne({
                 email,
             })
@@ -382,6 +384,103 @@ async function run() {
             }
         });
 
+        // save reported data 
+        app.post("/reports", verifiedToken, async (req, res) => {
+            try {
+                const { appId, userEmail, productName } = req.body;
+
+                if (!appId || !userEmail) {
+                    return res.status(400).send({ message: "appId and userEmail are required" });
+                }
+
+                // Check for duplicate report
+                const exists = await reportsCollection.findOne({ appId, userEmail });
+                if (exists) {
+                    return res.status(409).send({ message: "You have already reported this product." });
+                }
+
+                const report = {
+                    productName,
+                    appId,
+                    userEmail,
+                    createdAt: new Date()
+                };
+
+                await reportsCollection.insertOne(report);
+                res.send({ message: "Report submitted successfully." });
+            } catch (error) {
+                res.status(500).send({ message: "Failed to report", error });
+            }
+        });
+
+        // get reported data uniquely 
+
+        const { ObjectId } = require('mongodb'); // make sure to import ObjectId
+
+        app.get("/reports", async (req, res) => {
+            try {
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 10;
+                const skip = (page - 1) * limit;
+
+                // Pipeline to get paginated reports with app details
+                const pipeline = [
+                    { $sort: { createdAt: -1 } },
+                    {
+                        $group: {
+                            _id: "$appId",
+                            report: { $first: "$$ROOT" },
+                        },
+                    },
+                    { $replaceRoot: { newRoot: "$report" } },
+                    {
+                        $addFields: {
+                            appId: { $toObjectId: "$appId" },  // convert string appId to ObjectId
+                        },
+                    },
+                    {
+                        $lookup: {
+                            from: "apps",
+                            localField: "appId",
+                            foreignField: "_id",
+                            as: "app",
+                        },
+                    },
+                    {
+                        $unwind: {
+                            path: "$app",
+                            preserveNullAndEmptyArrays: true,
+                        },
+                    },
+                    { $skip: skip },
+                    { $limit: limit },
+                ];
+
+                // Use aggregation to count unique appId values
+                const uniqueCountResult = await reportsCollection.aggregate([
+                    { $group: { _id: "$appId" } },
+                    { $count: "totalUnique" }
+                ]).toArray();
+
+                const total = uniqueCountResult.length > 0 ? uniqueCountResult[0].totalUnique : 0;
+
+                // Fetch paginated reports with apps info
+                const result = await reportsCollection.aggregate(pipeline).toArray();
+
+                res.send({
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit),
+                    data: result,
+                });
+            } catch (error) {
+                console.error("Error in GET /reports:", error);
+                res.status(500).send({ message: "Server error", error });
+            }
+        });
+
+
 
 
 
@@ -427,6 +526,71 @@ async function run() {
             );
 
             res.send(result);
+        });
+
+        // get all user role  
+        app.get("/users", verifiedToken, verifyAdmin, async (req, res) => {
+            try {
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 10;
+                const skip = (page - 1) * limit;
+
+                // Filter: exclude admin users
+                const filter = { role: { $ne: "admin" } };
+
+                // Get total count of non-admin users
+                const total = await usersCollection.countDocuments(filter);
+
+                // Get paginated users (non-admin)
+                const users = await usersCollection
+                    .find(filter)
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
+
+                res.send({
+                    total,
+                    page,
+                    totalPages: Math.ceil(total / limit),
+                    users,
+                });
+                console.log(users);
+            } catch (error) {
+                console.error("Failed to fetch users:", error);
+                res.status(500).send({ message: "Failed to fetch users", error });
+            }
+        });
+
+        // update user role by id 
+        // PATCH: Update user role
+        app.patch("/users/role/:id", verifiedToken, verifyAdmin, async (req, res) => {
+            const userId = req.params.id;
+            const { role } = req.body;
+
+            try {
+                const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
+
+                if (!user) {
+                    return res.status(404).send({ message: "User not found" });
+                }
+
+                if (user.role === "admin") {
+                    return res.status(403).send({ message: "Cannot change role of an admin user" });
+                }
+
+                const updateResult = await usersCollection.updateOne(
+                    { _id: new ObjectId(userId) },
+                    { $set: { role } }
+                );
+
+                res.send({
+                    message: "Role updated successfully",
+                    result: updateResult,
+                });
+            } catch (error) {
+                console.error("Role update failed", error);
+                res.status(500).send({ message: "Internal Server Error", error });
+            }
         });
 
 
