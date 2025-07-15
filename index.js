@@ -105,6 +105,7 @@ async function run() {
     const db = client.db('appdb');
     const appsCollection = db.collection('apps');
     const usersCollection = db.collection('users');
+    const reviewsCollection = db.collection('reviews');
 
     try {
         // Connect the client to the server	(optional starting in v4.7)
@@ -197,6 +198,17 @@ async function run() {
             } catch (error) {
                 console.error(error);
                 res.status(500).send({ message: 'Server Error' });
+            }
+        });
+
+        // get apps by id 
+        app.get('/appsDetails/:id', verifiedToken, async (req, res) => {
+            try {
+                const id = req.params.id;
+                const result = await appsCollection.findOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to fetch app', error });
             }
         });
 
@@ -331,6 +343,45 @@ async function run() {
                 res.status(500).send({ message: 'Server error' });
             }
         });
+
+        // review save to data base 
+
+        app.post("/reviews", verifiedToken, async (req, res) => {
+            try {
+                const reviewData = req.body;
+                reviewData.createdAt = new Date();
+
+                const result = await reviewsCollection.insertOne(reviewData);
+
+                res.status(201).send({
+                    message: "Review submitted successfully",
+                    insertedId: result.insertedId,
+                });
+            } catch (error) {
+                res.status(500).send({ message: "Failed to submit review", error });
+            }
+        });
+
+        // get review by product 
+        app.get("/reviews", async (req, res) => {
+            try {
+                const productId = req.query.productId;
+
+                if (!productId) {
+                    return res.status(400).send({ message: "productId is required" });
+                }
+
+                const reviews = await reviewsCollection
+                    .find({ productId })
+                    .sort({ createdAt: -1 }) // newest first
+                    .toArray();
+
+                res.send(reviews);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to fetch reviews", error });
+            }
+        });
+
 
 
 
