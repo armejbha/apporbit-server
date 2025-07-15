@@ -4,7 +4,7 @@ const cors = require('cors')
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const app = express()
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const port = process.env.PORT || 3000;
 const admin = require("firebase-admin");
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
@@ -144,7 +144,7 @@ async function run() {
 
         // post apps data 
 
-        app.post('/add-apps',verifiedToken, async (req, res) => {
+        app.post('/add-apps', verifiedToken, async (req, res) => {
             try {
                 const appData = req.body;
 
@@ -166,6 +166,172 @@ async function run() {
                 res.status(500).send({ message: 'Failed to fetch products' });
             }
         });
+
+        // get apps for specific user 
+        app.get('/apps/user', verifiedToken, async (req, res) => {
+            try {
+                const { email, page = 1, limit = 10 } = req.query;
+
+                if (req.decoded.email !== email) {
+                    return res.status(403).send({ message: 'Forbidden access' });
+                }
+
+                const query = { 'owner.email': email };
+
+                const pageInt = parseInt(page);
+                const limitInt = parseInt(limit);
+
+                const total = await appsCollection.countDocuments(query);
+
+                const data = await appsCollection
+                    .find(query)
+                    .sort({ createdAt: -1 })
+                    .skip((pageInt - 1) * limitInt)
+                    .limit(limitInt)
+                    .toArray();
+
+                res.status(200).send({
+                    data,
+                    total,
+                });
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: 'Server Error' });
+            }
+        });
+
+        // upadate apps data 
+
+        app.patch('/apps/:id', verifiedToken, async (req, res) => {
+            try {
+                const { id } = req.params;
+                const updatedData = req.body;
+
+                const filter = { _id: new ObjectId(id) };
+                const updateDoc = {
+                    $set: {
+                        name: updatedData.name,
+                        title: updatedData.title,
+                        website: updatedData.website,
+                        description: updatedData.description,
+                        tags: updatedData.tags,
+                        image: updatedData.image,
+                        owner: {
+                            name: updatedData.ownerName,
+                            email: updatedData.ownerEmail,
+                            image: updatedData.ownerPhoto,
+                        }
+                    }
+                };
+
+                const result = await appsCollection.updateOne(filter, updateDoc);
+
+                if (result.modifiedCount > 0) {
+                    res.status(200).send({ success: true, message: 'App updated successfully' });
+                } else {
+                    res.status(404).send({ success: false, message: 'No app found or nothing was updated' });
+                }
+            } catch (error) {
+                console.error('Update error:', error);
+                res.status(500).send({ success: false, message: 'Server error' });
+            }
+        });
+
+        // deleted a apps data 
+        app.delete('/apps/:id', async (req, res) => {
+            const id = req.params.id;
+            try {
+                const result = await appsCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to delete the app' });
+            }
+        });
+
+        // upvote apps 
+        app.patch('/apps/upvote/:id', verifiedToken, async (req, res) => {
+            const userEmail = req.body.user;
+            const appId = req.params.id;
+
+            if (!userEmail) {
+                return res.status(400).send({ message: 'User email is required' });
+            }
+
+            try {
+                const appDoc = await appsCollection.findOne({ _id: new ObjectId(appId) });
+                if (!appDoc) {
+                    return res.status(404).send({ message: 'App not found' });
+                }
+
+                // Prevent owner voting
+                if (userEmail === appDoc.owner.email) {
+                    return res.status(403).send({ message: 'Owner cannot vote on own app' });
+                }
+
+                // Check if user already voted
+                if (appDoc.voters && appDoc.voters.includes(userEmail)) {
+                    return res.status(400).send({ message: 'User already voted' });
+                }
+
+                // Update: increment votes, add user to voters array
+                const result = await appsCollection.updateOne(
+                    { _id: new ObjectId(appId) },
+                    {
+                        $inc: { upvotes: 1 },
+                        $push: { voters: userEmail },
+                    }
+                );
+
+                if (result.modifiedCount === 1) {
+                    return res.send({ message: 'Upvote successful' });
+                } else {
+                    return res.status(500).send({ message: 'Failed to upvote' });
+                }
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: 'Server error' });
+            }
+        });
+
+        // undo upvote apps 
+        app.patch('/apps/undo-upvote/:id', verifiedToken, async (req, res) => {
+            const userEmail = req.body.user;
+            const appId = req.params.id;
+
+            if (!userEmail) {
+                return res.status(400).send({ message: 'User email is required' });
+            }
+
+            try {
+                const appDoc = await appsCollection.findOne({ _id: new ObjectId(appId) });
+                if (!appDoc) {
+                    return res.status(404).send({ message: 'App not found' });
+                }
+
+                if (!appDoc.voters || !appDoc.voters.includes(userEmail)) {
+                    return res.status(400).send({ message: 'User has not voted yet' });
+                }
+
+                // Update: decrement votes, remove user from voters array
+                const result = await appsCollection.updateOne(
+                    { _id: new ObjectId(appId) },
+                    {
+                        $inc: { upvotes: -1 },
+                        $pull: { voters: userEmail },
+                    }
+                );
+
+                if (result.modifiedCount === 1) {
+                    return res.send({ message: 'Undo upvote successful' });
+                } else {
+                    return res.status(500).send({ message: 'Failed to undo upvote' });
+                }
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: 'Server error' });
+            }
+        });
+
 
 
         // inserted user to database
