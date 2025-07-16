@@ -3,6 +3,7 @@ const express = require('express')
 const cors = require('cors')
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const app = express()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const port = process.env.PORT || 3000;
@@ -732,6 +733,84 @@ async function run() {
                 .toArray();
             res.send(coupons);
         });
+
+        // payment method 
+
+        app.post("/create-payment-intent", async (req, res) => {
+            const { price } = req.body;
+            const amount = price * 100; // in cents
+
+            try {
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount,
+                    currency: "usd",
+                    payment_method_types: ["card"],
+                });
+
+                res.send({ clientSecret: paymentIntent.client_secret });
+            } catch (error) {
+                res.status(500).send({ error: error.message });
+            }
+        });
+
+
+
+
+
+        // admin stats 
+        // GET /admin-stats
+        app.get("/admin-stats", verifiedToken, verifyAdmin, async (req, res) => {
+            try {
+                const [userCount, appCount, pendingApps, approvedApps, rejectedApps, reviewCount, reportCount, couponCount] = await Promise.all([
+                    usersCollection.countDocuments({ role: { $ne: "admin" } }),
+                    appsCollection.estimatedDocumentCount(),
+                    appsCollection.countDocuments({ status: "pending" }),
+                    appsCollection.countDocuments({ status: "accepted" }),
+                    appsCollection.countDocuments({ status: "rejected" }),
+                    reviewsCollection.estimatedDocumentCount(),
+                    reportsCollection.estimatedDocumentCount(),
+                    couponsCollection.countDocuments({ isActive: true }),
+                ]);
+
+                res.send({
+                    users: userCount,
+                    totalApps: appCount,
+                    pendingApps,
+                    approvedApps,
+                    rejectedApps,
+                    reviews: reviewCount,
+                    reports: reportCount,
+                    activeCoupons: couponCount,
+                });
+            } catch (error) {
+                console.error("Error in /admin-stats:", error);
+                res.status(500).send({ message: "Failed to fetch admin stats", error });
+            }
+        });
+
+        // post day by day 
+
+        app.get("/admin/posts-by-day", verifiedToken, verifyAdmin, async (req, res) => {
+            try {
+                const postsByDay = await appsCollection.aggregate([
+                    {
+                        $group: {
+                            _id: {
+                                $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+                            },
+                            count: { $sum: 1 },
+                        },
+                    },
+                    { $sort: { _id: 1 } }
+                ]).toArray();
+                console.log(postsByDay);
+                res.send(postsByDay);
+            } catch (error) {
+                console.error("Error in /posts-by-day:", error);
+                res.status(500).send({ message: "Failed to fetch post statistics", error });
+            }
+        });
+
 
 
 
