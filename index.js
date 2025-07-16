@@ -162,13 +162,31 @@ async function run() {
         // get all apps 
         app.get('/apps', async (req, res) => {
             try {
-                const result = await appsCollection.find().toArray();
-                res.send(result);
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 10;
+                const skip = (page - 1) * limit;
+
+                const total = await appsCollection.countDocuments();
+
+                const result = await appsCollection
+                    .find()
+                    .sort({ status: 1 }) // Alphabetically: pending < approved < rejected
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
+
+                res.send({
+                    data: result,
+                    total,
+                    totalPages: Math.ceil(total / limit),
+                });
             } catch (error) {
-                console.error('Error fetching products:', error);
-                res.status(500).send({ message: 'Failed to fetch products' });
+                console.error('Error fetching apps:', error);
+                res.status(500).send({ message: 'Failed to fetch apps' });
             }
         });
+
+
 
         // get apps for specific user 
         app.get('/apps/user', verifiedToken, async (req, res) => {
@@ -204,7 +222,7 @@ async function run() {
         });
 
         // get apps by id 
-        app.get('/appsDetails/:id', verifiedToken, async (req, res) => {
+        app.get('/appsDetails/:id', async (req, res) => {
             try {
                 const id = req.params.id;
                 const result = await appsCollection.findOne({ _id: new ObjectId(id) });
@@ -415,8 +433,6 @@ async function run() {
 
         // get reported data uniquely 
 
-        const { ObjectId } = require('mongodb'); // make sure to import ObjectId
-
         app.get("/reports", async (req, res) => {
             try {
                 const page = parseInt(req.query.page) || 1;
@@ -480,6 +496,24 @@ async function run() {
             }
         });
 
+        // delete data form database 
+        // DELETE /reports/:id
+        app.delete('/reports/:id', verifiedToken, verifyModerator, async (req, res) => {
+            const { id } = req.params;
+            console.log(id);
+            try {
+                const result = await reportsCollection.deleteOne({ _id: new ObjectId(id) });
+                console.log(result);
+                if (result.deletedCount > 0) {
+                    res.send({ success: true, result });
+
+                } else {
+                    res.status(404).send({ success: false, message: 'Report not found' });
+                }
+            } catch (error) {
+                res.status(500).send({ success: false, message: 'Failed to delete report' });
+            }
+        });
 
 
 
