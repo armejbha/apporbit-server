@@ -162,28 +162,78 @@ async function run() {
         // get all apps 
         app.get('/apps', async (req, res) => {
             try {
-                const page = parseInt(req.query.page) || 1;
-                const limit = parseInt(req.query.limit) || 10;
-                const skip = (page - 1) * limit;
-
-                const total = await appsCollection.countDocuments();
-
                 const result = await appsCollection
                     .find()
-                    .sort({ status: 1 }) // Alphabetically: pending < approved < rejected
-                    .skip(skip)
-                    .limit(limit)
+                    .sort({ status: 1 }) // pending first
                     .toArray();
+
+                const total = result.length;
 
                 res.send({
                     data: result,
                     total,
-                    totalPages: Math.ceil(total / limit),
                 });
             } catch (error) {
-                console.error('Error fetching apps:', error);
-                res.status(500).send({ message: 'Failed to fetch apps' });
+                console.error('Error fetching all apps:', error);
+                res.status(500).send({ message: 'Failed to fetch all apps' });
             }
+        });
+
+
+
+      
+
+        app.get('/apps/paginated', async (req, res) => {
+            try {
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 6;
+                const search = req.query.search || "";
+
+                // Search: match any tag that contains the search term (case-insensitive)
+                const query = search
+                    ? { tags: { $elemMatch: { $regex: search, $options: 'i' } } }
+                    : {};
+
+                const total = await appsCollection.countDocuments(query);
+                const totalPages = Math.ceil(total / limit);
+
+                const data = await appsCollection
+                    .find(query)
+                    .sort({ status: 1 }) // Optional: sort pending apps first
+                    .skip((page - 1) * limit)
+                    .limit(limit)
+                    .toArray();
+
+                res.send({ data, total, totalPages });
+            } catch (error) {
+                console.error("Error fetching paginated apps:", error);
+                res.status(500).send({ message: "Failed to fetch apps" });
+            }
+        });
+
+
+
+
+
+        // PATCH /apps/feature/:id
+        app.patch('/apps/feature/:id', verifiedToken, verifyModerator, async (req, res) => {
+            const { id } = req.params;
+            const result = await appsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { isFeatured: true } }
+            );
+            res.send(result);
+        });
+
+        // PATCH /apps/status/:id
+        app.patch('/apps/status/:id', verifiedToken, verifyModerator, async (req, res) => {
+            const { id } = req.params;
+            const { status } = req.body;
+            const result = await appsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { status } }
+            );
+            res.send(result);
         });
 
 
@@ -284,6 +334,7 @@ async function run() {
         app.patch('/apps/upvote/:id', verifiedToken, async (req, res) => {
             const userEmail = req.body.user;
             const appId = req.params.id;
+            console.log(appId, userEmail)
 
             if (!userEmail) {
                 return res.status(400).send({ message: 'User email is required' });
