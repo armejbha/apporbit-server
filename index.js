@@ -107,6 +107,7 @@ async function run() {
     const usersCollection = db.collection('users');
     const reviewsCollection = db.collection('reviews');
     const reportsCollection = db.collection('reports');
+    const couponsCollection = db.collection('coupons')
 
     try {
         // Connect the client to the server	(optional starting in v4.7)
@@ -144,7 +145,6 @@ async function run() {
         }
 
 
-
         // post apps data 
 
         app.post('/add-apps', verifiedToken, async (req, res) => {
@@ -180,9 +180,6 @@ async function run() {
         });
 
 
-
-      
-
         app.get('/apps/paginated', async (req, res) => {
             try {
                 const page = parseInt(req.query.page) || 1;
@@ -210,9 +207,6 @@ async function run() {
                 res.status(500).send({ message: "Failed to fetch apps" });
             }
         });
-
-
-
 
 
         // PATCH /apps/feature/:id
@@ -567,8 +561,6 @@ async function run() {
         });
 
 
-
-
         // inserted user to database
         app.post('/user', async (req, res) => {
             const userData = req.body
@@ -678,6 +670,68 @@ async function run() {
             }
         });
 
+        //  coupons 
+
+        // get all coupons 
+        app.get("/admin/coupons", verifiedToken, verifyAdmin, async (req, res) => {
+            const coupons = await couponsCollection.find().sort({ expiryDate: 1 }).toArray();
+            res.send(coupons);
+        });
+
+        // create a coupons 
+        app.post("/admin/coupons", verifiedToken, verifyAdmin, async (req, res) => {
+            const coupon = req.body;
+            try {
+                const result = await couponsCollection.insertOne(coupon);
+                res.send(result);
+            } catch {
+                res.status(500).send({ error: "Insert failed" });
+            }
+        });
+
+        // update code 
+        app.patch("/admin/coupons/:id", verifiedToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+
+            const updateData = req.body;
+            console.log(updateData, id)
+            try {
+                const result = await couponsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
+                console.log(result);
+                if (result.modifiedCount > 0) {
+                    res.send({ success: true, message: "Coupon updated successfully." });
+                } else {
+                    res.status(404).send({ success: false, message: "No matching coupon found." });
+                }
+            } catch (error) {
+                console.error("Error updating coupon:", error);
+                res.status(500).send({ success: false, error: "Internal Server Error" });
+            }
+        });
+
+        // delete token 
+        app.delete("/admin/coupons/:id", verifiedToken, verifyAdmin, async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await couponsCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ error: "Failed to delete coupon" });
+            }
+        });
+
+        // get valid coupons 
+        app.get("/coupons", async (req, res) => {
+            const today = new Date().toISOString();
+            const coupons = await couponsCollection
+                .find({ isActive: true, expiryDate: { $gt: today } })
+                .sort({ expiryDate: 1 })
+                .toArray();
+            res.send(coupons);
+        });
 
 
 
