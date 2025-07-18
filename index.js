@@ -3,7 +3,7 @@ const express = require('express')
 const cors = require('cors')
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
 const app = express()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const port = process.env.PORT || 3000;
@@ -11,16 +11,20 @@ const admin = require("firebase-admin");
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
 const serviceAccount = JSON.parse(decoded);
 
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
 // cloudinary upload 
 const upload = multer({ storage: multer.memoryStorage() });
 
 // middleware 
 const corsOptions = {
-    origin: ['http://localhost:5173', 'http://localhost:5174'],
+    origin: [
+        'http://localhost:5173',
+        'https://app-orbit69.web.app', // replace with actual deployed client URL
+    ],
     credentials: true,
-    optionSuccessStatus: 200,
-}
-app.use(cors(corsOptions))
+};
+app.use(cors(corsOptions));
 
 app.use(express.json())
 
@@ -32,6 +36,7 @@ admin.initializeApp({
 
 const verifiedToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
+    // console.log(authHeader);
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).send({ message: 'unauthorize access' });
     }
@@ -151,7 +156,27 @@ async function run() {
         app.post('/add-apps', verifiedToken, async (req, res) => {
             try {
                 const appData = req.body;
+                const email = appData?.owner?.email;
 
+                if (!email) {
+                    return res.status(400).send({ message: 'Owner email is required' });
+                }
+
+                // Get user by email
+                const user = await usersCollection.findOne({ email });
+
+                if (!user) {
+                    return res.status(403).send({ message: 'User not found' });
+                }
+
+                const existingApps = await appsCollection.find({ 'owner.email': email }).toArray();
+
+                // Restrict if not subscribed and already added 1 app
+                if (!user.isSubscribe && existingApps.length >= 1) {
+                    return res.status(403).send({ message: 'Upgrade to Membership to add more than 1 app.' });
+                }
+
+                // Add the new app
                 const result = await appsCollection.insertOne(appData);
                 res.status(201).send({ message: 'App added successfully', insertedId: result.insertedId });
             } catch (error) {
@@ -160,12 +185,13 @@ async function run() {
             }
         });
 
+
         // get all apps 
         app.get('/apps', async (req, res) => {
             try {
                 const result = await appsCollection
                     .find()
-                    .sort({ status: 1 }) // pending first
+                    .sort({ status: 1 })
                     .toArray();
 
                 const total = result.length;
@@ -180,7 +206,41 @@ async function run() {
             }
         });
 
+        // accepted query 
+        app.get('/apps/accepted/paginated', async (req, res) => {
+            try {
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 6;
+                const search = req.query.search || "";
 
+                // Base query: only accepted apps
+                let query = { status: "accepted" };
+
+                // If search term exists, add tag search condition with case-insensitive regex
+                if (search) {
+                    query.tags = { $elemMatch: { $regex: search, $options: 'i' } };
+                }
+
+                const total = await appsCollection.countDocuments(query);
+                const totalPages = Math.ceil(total / limit);
+
+                const data = await appsCollection
+                    .find(query)
+                    .sort({ status: 1 }) // Optional: you can remove or modify sorting here if needed
+                    .skip((page - 1) * limit)
+                    .limit(limit)
+                    .toArray();
+
+                res.send({ data, total, totalPages });
+            } catch (error) {
+                console.error("Error fetching paginated accepted apps:", error);
+                res.status(500).send({ message: "Failed to fetch apps" });
+            }
+        });
+
+
+
+        // pagination query 
         app.get('/apps/paginated', async (req, res) => {
             try {
                 const page = parseInt(req.query.page) || 1;
@@ -197,7 +257,7 @@ async function run() {
 
                 const data = await appsCollection
                     .find(query)
-                    .sort({ status: 1 }) // Optional: sort pending apps first
+                    .sort({ status: 1 })
                     .skip((page - 1) * limit)
                     .limit(limit)
                     .toArray();
@@ -251,7 +311,7 @@ async function run() {
 
                 const data = await appsCollection
                     .find(query)
-                    .sort({ createdAt: -1 })
+                    .sort({ status: -1 })
                     .skip((pageInt - 1) * limitInt)
                     .limit(limitInt)
                     .toArray();
@@ -590,7 +650,7 @@ async function run() {
             const email = req.params.email
             const result = await usersCollection.findOne({ email })
             if (!result) return res.status(404).send({ message: 'User Not Found.' })
-            res.send({ role: result?.role })
+            res.send({ role: result?.role, result: result })
         })
         // update user info data 
         // PATCH /users/:email
@@ -734,29 +794,6 @@ async function run() {
             res.send(coupons);
         });
 
-        // payment method 
-
-        app.post("/create-payment-intent", async (req, res) => {
-            const { price } = req.body;
-            const amount = price * 100; // in cents
-
-            try {
-                const paymentIntent = await stripe.paymentIntents.create({
-                    amount,
-                    currency: "usd",
-                    payment_method_types: ["card"],
-                });
-
-                res.send({ clientSecret: paymentIntent.client_secret });
-            } catch (error) {
-                res.status(500).send({ error: error.message });
-            }
-        });
-
-
-
-
-
         // admin stats 
         // GET /admin-stats
         app.get("/admin-stats", verifiedToken, verifyAdmin, async (req, res) => {
@@ -811,7 +848,47 @@ async function run() {
             }
         });
 
+        // payment gate way implement
+        app.post('/create-payment-intent', async (req, res) => {
+            const { amount, email, couponCode, name } = req.body;
 
+            try {
+                let finalAmount = parseFloat(amount);
+                console.log(finalAmount);
+                if (couponCode) {
+                    const coupon = await couponsCollection.findOne({ code: couponCode });
+                    console.log(coupon);
+                    if (coupon) {
+                        finalAmount -= coupon.discountAmount;
+                        if (finalAmount < 0) finalAmount = 0;
+                    }
+                }
+
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: Math.round(finalAmount * 100), // cents
+                    currency: 'usd',
+                    receipt_email: email,
+                });
+
+                res.send({ clientSecret: paymentIntent.client_secret });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // After successful payment
+        app.patch('/subscribe-user', async (req, res) => {
+            const { email } = req.body;
+            try {
+                const result = await usersCollection.updateOne(
+                    { email },
+                    { $set: { isSubscribe: true } }
+                );
+                res.send(result);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
 
 
         // Send a ping to confirm a successful connection
