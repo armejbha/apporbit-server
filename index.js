@@ -34,7 +34,7 @@ admin.initializeApp({
 });
 
 
-const verifiedToken = async (req, res, next) => {
+const verifiedToken = async (req, res,next) => {
     const authHeader = req.headers.authorization;
     // console.log(authHeader);
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
