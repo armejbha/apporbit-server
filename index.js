@@ -34,7 +34,7 @@ admin.initializeApp({
 });
 
 
-const verifiedToken = async (req, res,next) => {
+const verifiedToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     // console.log(authHeader);
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -644,7 +644,19 @@ async function run() {
             const result = await usersCollection.insertOne(userData)
             res.send(result)
         })
-
+        // get specific user info 
+        app.get("/users/:email", async (req, res) => {
+            const email = req.params.email;
+            try {
+                const user = await usersCollection.findOne({ email: email });
+                if (!user) {
+                    return res.status(404).json({ message: "User not found" });
+                }
+                res.json(user);
+            } catch (error) {
+                res.status(500).json({ message: "Server error" });
+            }
+        });
         // get user role from database 
         app.get('/user/role/:email', verifiedToken, async (req, res) => {
             const email = req.params.email
